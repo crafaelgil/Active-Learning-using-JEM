@@ -1,0 +1,13 @@
+MedMNIST2D	    Data Modality	            Tasks (# Classes/Labels)	        Channel     # Samples	# Training / Validation / Test
+PathMNIST	    Colon Pathology	            Multi-Class (9)	                    3           107,180	    89,996 / 10,004 / 7,180
+ChestMNIST	    Chest X-ray	                Multi-Label (14) Binary-Class (2)	1           112,120	    78,468 / 11,219 / 22,433
+DermaMNIST	    Dermatoscope	            Multi-Class (7)	                    3           10,015	    7,007 / 1,003 / 2,005
+OCTMNIST	    Retinal OCT	                Multi-Class (4)	                    1           109,309	    97,477 / 10,832 / 1,000
+PneumoniaMNIST	Chest X-Ray	                Binary-Class (2)	                1           5,856	    4,708 / 524 / 624
+RetinaMNIST	    Fundus Camera	            Ordinal Regression (5)	            3           1,600	    1,080 / 120 / 400
+BreastMNIST	    Breast Ultrasound	        Binary-Class (2)	                1           780	        546 / 78 / 156
+BloodMNIST	    Blood Cell Microscope	    Multi-Class (8)	                    3           17,092	    11,959 / 1,712 / 3,421
+TissueMNIST	    Kidney Cortex Microscope	Multi-Class (8)	                    1           236,386	    165,466 / 23,640 / 47,280
+OrganAMNIST	    Abdominal CT	            Multi-Class (11)	                1           58,850	    34,581 / 6,491 / 17,778
+OrganCMNIST	    Abdominal CT	            Multi-Class (11)	                1           23,660	    13,000 / 2,392 / 8,268
+OrganSMNIST	    Abdominal CT	            Multi-Class (11)	                1           25,221	    13,940 / 2,452 / 8,829

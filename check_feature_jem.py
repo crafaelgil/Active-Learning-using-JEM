@@ -1,0 +1,229 @@
+"""Feature visualization for the joint energy-based model.
+
+Author: Hideaki Hayashi
+Ver. 1.0.0
+"""
+
+import utils
+import torch as t
+import torch.nn as nn
+from torch.utils.data import DataLoader, Dataset
+import torchvision as tv
+import torchvision.transforms as tr
+import os
+import sys
+import argparse
+import numpy as np
+from basenet import basenet
+import pdb
+from netcal.metrics import ECE
+from netcal.presentation import ReliabilityDiagram
+from torchsummary import summary
+from visualization_tools import VisualizeFeatureByPCA, VisualizeFeatureByTSNE
+from tqdm import tqdm
+from dataload_utils import get_test_data
+t.backends.cudnn.benchmark = True
+t.backends.cudnn.enabled = True
+
+
+class F(nn.Module):
+    def __init__(self, n_classes=0):
+        super(F, self).__init__()
+        self.f = basenet(args.basenet, n_ch=args.n_ch)
+        self.energy_output = nn.Linear(self.f.last_dim, 1)
+        self.class_output = nn.Linear(self.f.last_dim, n_classes)
+
+    def forward(self, x, y=None):
+        penult_z = self.f(x)
+        return self.energy_output(penult_z).squeeze()
+
+    def classify(self, x):
+        penult_z = self.f(x)
+        return self.class_output(penult_z).squeeze()
+
+
+class CCF(F):
+    def __init__(self, n_classes=0):
+        super(CCF, self).__init__(n_classes=n_classes)
+
+    def forward(self, x, y=None):
+        logits = self.classify(x)
+        if y is None:
+            return logits.logsumexp(1)
+        else:
+            return t.gather(logits, 1, y[:, None])
+
+
+def init_random(bs):
+    return t.FloatTensor(bs, 3, 32, 32).uniform_(-1, 1)
+
+
+def sample_p_0(device, replay_buffer, bs, y=None):
+    if len(replay_buffer) == 0:
+        return init_random(bs), []
+    buffer_size = len(replay_buffer) if y is None else len(
+        replay_buffer) // n_classes
+    inds = t.randint(0, buffer_size, (bs,))
+    # if cond, convert inds to class conditional inds
+    if y is not None:
+        inds = y.cpu() * buffer_size + inds
+        assert not args.uncond, "Can't drawn conditional samples without giving me y"
+    buffer_samples = replay_buffer[inds]
+    random_samples = init_random(bs)
+    choose_random = (t.rand(bs) < args.reinit_freq).float()[
+        :, None, None, None]
+    samples = choose_random * random_samples + \
+        (1 - choose_random) * buffer_samples
+    return samples.to(device), inds
+
+
+def sample_q(args, device, f, replay_buffer, y=None):
+    """this func takes in replay_buffer now so we have the option to sample from
+    scratch (i.e. replay_buffer==[]).  See test_wrn_ebm.py for example.
+    """
+    f.eval()
+    # get batch size
+    bs = args.batch_size if y is None else y.size(0)
+    # generate initial samples and buffer inds of those samples (if buffer is used)
+    init_sample, buffer_inds = sample_p_0(device, replay_buffer, bs=bs, y=y)
+    x_k = t.autograd.Variable(init_sample, requires_grad=True)
+    # sgld
+    for k in range(args.n_steps):
+        f_prime = t.autograd.grad(
+            f(x_k, y=y).sum(), [x_k], retain_graph=True)[0]
+        x_k.data += args.sgld_lr * f_prime + args.sgld_std * t.randn_like(x_k)
+    f.train()
+    final_samples = x_k.detach()
+    # update replay buffer
+    if len(replay_buffer) > 0:
+        replay_buffer[buffer_inds] = final_samples.cpu()
+    return final_samples
+
+
+def uncond_samples(f, args, device, save=True):
+    def sqrt(x): return int(t.sqrt(t.Tensor([x])))
+    def plot(p, x): return tv.utils.save_image(
+        t.clamp(x, -1, 1), p, normalize=True, nrow=sqrt(x.size(0)))
+
+    replay_buffer = t.FloatTensor(args.buffer_size, 3, 32, 32).uniform_(-1, 1)
+    for i in range(args.n_sample_steps):
+        samples = sample_q(args, device, f, replay_buffer)
+        if i % args.print_every == 0 and save:
+            plot('{}/samples_{}.png'.format(args.save_dir, i), samples)
+        print(i)
+    return replay_buffer
+
+
+def cond_samples(f, replay_buffer, args, device, fresh=False):
+    def sqrt(x): return int(t.sqrt(t.Tensor([x])))
+    def plot(p, x): return tv.utils.save_image(
+        t.clamp(x, -1, 1), p, normalize=True, nrow=sqrt(x.size(0)))
+
+    if fresh:
+        replay_buffer = uncond_samples(f, args, device, save=False)
+    n_it = replay_buffer.size(0) // 100
+    all_y = []
+    for i in range(n_it):
+        x = replay_buffer[i * 100: (i + 1) * 100].to(device)
+        y = f.classify(x).max(1)[1]
+        all_y.append(y)
+
+    all_y = t.cat(all_y, 0)
+    each_class = [replay_buffer[all_y == l] for l in range(10)]
+    print([len(c) for c in each_class])
+    for i in range(100):
+        this_im = []
+        for l in range(10):
+            this_l = each_class[l][i * 10: (i + 1) * 10]
+            this_im.append(this_l)
+        this_im = t.cat(this_im, 0)
+        if this_im.size(0) > 0:
+            plot('{}/samples_{}.png'.format(args.save_dir, i), this_im)
+        print(i)
+
+
+def check_feature(f, args, device):
+    dload = get_test_data(args)
+    gts, features = [], []
+    for x_p_d, y_p_d in tqdm(dload):
+        x_p_d, y_p_d = x_p_d.to(device), y_p_d.to(device).squeeze().long()
+        feat = f(x_p_d)
+        with t.no_grad():
+            gts.extend(y_p_d.cpu().numpy())
+            features.extend(feat.cpu().numpy())
+    with t.no_grad():
+        features = np.array(features).reshape((-1, 640))
+        gts = np.array(gts)
+        VisualizeFeatureByPCA(features, gts, args.n_classes, 2,
+                              figname='{}/features_pca'.format(args.save_dir), color_map='tab10')
+        VisualizeFeatureByTSNE(features, gts, args.n_classes, 2,
+                               figname='{}/features_t-sne'.format(args.save_dir), color_map='tab10')
+
+
+def main(args):
+    # Logging
+    utils.makedirs(args.save_dir)
+    if args.print_to_log:
+        sys.stdout = open(f'{args.save_dir}/log.txt', 'w')
+
+    # Environments
+    device = t.device('cuda' if t.cuda.is_available() else 'cpu')
+    t.manual_seed(args.cuda_seed)
+    if t.cuda.is_available():
+        t.cuda.manual_seed_all(args.cuda_seed)
+
+    # Model
+    model_cls = F if args.uncond else CCF
+    original_model = model_cls(n_classes=args.n_classes)
+    print(f"loading model from {args.load_path}")
+    ckpt_dict = t.load(args.load_path)
+    original_model.load_state_dict(ckpt_dict["model_state_dict"])
+    replay_buffer = ckpt_dict["replay_buffer"]
+    layers = list(original_model.children())[:-1]
+    f = nn.Sequential(*layers)
+    f = f.to(device)
+    summary(f, (args.n_ch, args.im_sz, args.im_sz))
+
+    # Feature visualization
+    check_feature(f, args, device)
+    
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser("Feature visualization for the hybrid model.")
+    parser.add_argument("--dataset", default="cifar_test", type=str, choices=[
+                        "cifar_train", "cifar_test", "svhn_test", "svhn_train", "MRI", "OCT", "pathmnist", "octmnist", "pneumoniamnist", "chestmnist", "dermamnist", "breastmnist", "bloodmnist", "tissuemnist", "organamnist", "organcmnist", "organsmnist"], help="Dataset to use when running test_clf for classification accuracy")
+    parser.add_argument("--n_classes", type=int, default=0)
+    # optimization
+    parser.add_argument("--batch_size", type=int, default=64)
+    # regularization
+    parser.add_argument("--sigma", type=float, default=3e-2)
+    # network
+    parser.add_argument("--norm", type=str, default=None,
+                        choices=[None, "norm", "batch", "instance", "layer", "act"])
+    # EBM specific
+    parser.add_argument("--n_steps", type=int, default=0)
+    parser.add_argument("--width", type=int, default=10)
+    parser.add_argument("--depth", type=int, default=28)
+    parser.add_argument("--uncond", action="store_true")
+    parser.add_argument("--buffer_size", type=int, default=0)
+    parser.add_argument("--reinit_freq", type=float, default=.05)
+    parser.add_argument("--sgld_lr", type=float, default=1.0)
+    parser.add_argument("--sgld_std", type=float, default=1e-2)
+    # logging + evaluation
+    parser.add_argument("--save_dir", type=str,
+                        default='Results')
+    parser.add_argument("--print_every", type=int, default=100)
+    parser.add_argument("--n_sample_steps", type=int, default=100)
+    parser.add_argument("--load_path", type=str, default=None)
+    parser.add_argument("--print_to_log", action="store_true")
+    parser.add_argument("--fresh_samples", action="store_true",
+                        help="If set, then we generate a new replay buffer from scratch for conditional sampling,"
+                             "Will be much slower.")
+    parser.add_argument("--im_sz", type=int)
+    parser.add_argument("--n_ch", type=int)
+    parser.add_argument("--cuda_seed", type=int, default=1)
+    parser.add_argument("--basenet", type=str, default="wideresnet",
+                        choices=["wideresnet", "resnet18", "resnet50"])
+    args = parser.parse_args()
+    assert args.n_classes > 0, "Set n_classes!"
+    main(args)
