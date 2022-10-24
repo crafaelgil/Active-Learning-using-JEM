@@ -1,0 +1,5 @@
+| Wide-Resnet 28x10
+loading model from jem_bloodmnist/seed1/best_valid_ckpt.pt
+Loss=28.315776824951172
+Accuracy=0.21543408930301666
+ECE=0.7240919555637857

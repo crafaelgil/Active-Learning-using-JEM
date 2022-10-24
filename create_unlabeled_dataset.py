@@ -12,7 +12,6 @@ def create_unlabeled_dataset_from(dataset, ratio):
   shutil.copy2(base_path + dataset + '.npz', base_path + dataset + '-unlabeled.npz')
   unlabeled_data_set = dict(np.load(base_path + dataset + '-unlabeled.npz'))
 
-
   total_set_unlabeled_inds = []
 
   total_num_labels = len(unlabeled_data_set['train_labels'])
@@ -39,6 +38,11 @@ def create_unlabeled_dataset_from(dataset, ratio):
 
   print('Unlabeled inds after creating unlabled dataset: ' + str(total_set_unlabeled_inds))
   print('Number of unlabeled inds: ' + str(len(total_set_unlabeled_inds)) + '/' + str(total_num_labels))
+
+  # unlabeled_inds = np.random.randint(0, total_num_labels, int(total_num_labels*0.1))
+
+  # for ind in unlabeled_inds:
+  #   unlabeled_data_set['train_labels'][ind] = 255
 
   np.savez(base_path + dataset + '-unlabeled.npz', **unlabeled_data_set)
 

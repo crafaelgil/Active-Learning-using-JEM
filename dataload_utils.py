@@ -99,6 +99,7 @@ def get_data(args):
     train_unlabeled_inds.sort()
 
     print("train_unlabeled_inds before dataloader: " + str(train_unlabeled_inds))
+    print("Number of unlabeled imgs: " + str(len(train_unlabeled_inds)))
 
     # Shuffle
     np.random.shuffle(all_inds)
