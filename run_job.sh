@@ -1,9 +1,9 @@
 #!/bin/bash
 
 #$ -l rt_AG.small=1
-#$ -l h_rt=168:00:00
+#$ -l h_rt=72:00:00
 #$ -j y
-#$ -N jem_blood
+#$ -N j100Blood
 #$ -cwd 
 
 source /etc/profile.d/modules.sh

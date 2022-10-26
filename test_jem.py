@@ -4,7 +4,7 @@ Author: Hideaki Hayashi
 Ver. 1.0.0
 """
 
-# import medmnist
+import medmnist
 import utils
 import torch as t
 import torch.nn as nn
@@ -60,7 +60,8 @@ def init_random(bs):
 def sample_p_0(device, replay_buffer, bs, y=None):
     if len(replay_buffer) == 0:
         return init_random(bs), []
-    buffer_size = len(replay_buffer) if y is None else len(replay_buffer) // n_classes
+    buffer_size = len(replay_buffer) if y is None else len(
+        replay_buffer) // n_classes
     inds = t.randint(0, buffer_size, (bs,))
     # if cond, convert inds to class conditional inds
     if y is not None:
@@ -160,8 +161,9 @@ def test_clf(f, args, device):
         if args.n_steps > 0:
             x_p_d = sample(x_p_d)
         logits = f.classify(x_p_d)
-        py = nn.Softmax(dim=1)(f.classify(x_p_d)).max(1)[0].detach().cpu().numpy()
-        loss = nn.CrossEntropyLoss(reduce=False)(logits, y_p_d).cpu().detach().numpy()
+        py = nn.Softmax()(f.classify(x_p_d)).max(1)[0].detach().cpu().numpy()
+        loss = nn.CrossEntropyLoss(reduce=False)(
+            logits, y_p_d).cpu().detach().numpy()
         losses.extend(loss)
         correct = (logits.max(1)[1] == y_p_d).float().cpu().numpy()
         corrects.extend(correct)
@@ -199,7 +201,7 @@ def main(args):
     if t.cuda.is_available():
         t.cuda.manual_seed_all(args.cuda_seed)
 
-    # Model
+    # Model    
     model_cls = F if args.uncond else CCF
     f = model_cls(n_classes=args.n_classes)
     print(f"loading model from {args.load_path}")
@@ -215,7 +217,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Test of the JEM")
     parser.add_argument("--dataset", default="cifar_test", type=str, choices=[
-                        "cifar_train", "cifar_test", "svhn_test", "svhn_train", "MRI", "OCT", "pathmnist", "octmnist", "pneumoniamnist", "chestmnist", "dermamnist", "breastmnist", "bloodmnist", "tissuemnist", "organamnist", "organcmnist", "organsmnist", "bloodmnist-unlabeled"], help="Dataset to use when running test_clf for classification accuracy")
+                        "cifar_train", "cifar_test", "svhn_test", "svhn_train", "MRI", "OCT", "pathmnist", "octmnist", "pneumoniamnist", "chestmnist", "dermamnist", "breastmnist", "bloodmnist", "tissuemnist", "organamnist", "organcmnist", "organsmnist"], help="Dataset to use when running test_clf for classification accuracy")
     parser.add_argument("--n_classes", type=int, default=0)
     # optimization
     parser.add_argument("--batch_size", type=int, default=64)

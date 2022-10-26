@@ -22,13 +22,14 @@ class DataSubset(Dataset):
     def __len__(self):
         return len(self.inds)
 
+
 def cycle(loader):
     while True:
         for data in loader:
             yield data
 
 
-def get_data(args):
+def get_data(args, train_labeled_inds=None, train_unlabeled_inds=None, inds_to_fix=None, start_iter=True):
     if args.n_ch == 1:
         transform_train = tr.Compose(
             [tr.Pad(4, padding_mode="reflect"),
@@ -58,12 +59,6 @@ def get_data(args):
         DataClass = getattr(medmnist, info['python_class'])
         return DataClass(split='train' if train else 'val', transform=transform, download=True)
 
-    def MedMNISTUnlabeled(train, transform):
-        info = medmnist.INFO[args.dataset]
-        DataClass = getattr(medmnist, info['python_class'])
-        return DataClass(split='train' if train else 'val', transform=transform, download=False)
-
-
     def dataset_fn(train, transform):
         if args.dataset == "cifar10":
             return tv.datasets.CIFAR10(root=args.data_root, transform=transform, download=True, train=train)
@@ -75,8 +70,6 @@ def get_data(args):
             return OCT_dataset(root="./OCT_data/train" if train else "./OCT_data/val", transform=transform)
         elif args.dataset in ["pathmnist", "octmnist", "pneumoniamnist", "chestmnist", "dermamnist", "breastmnist", "bloodmnist", "tissuemnist", "organamnist", "organcmnist", "organsmnist"]:
             return MedMnist(train, transform)
-        elif args.dataset in ["pathmnist-unlabeled", "octmnist-unlabeled", "pneumoniamnist-unlabeled", "chestmnist-unlabeled", "dermamnist-unlabeled", "breastmnist-unlabeled", "bloodmnist-unlabeled", "tissuemnist-unlabeled", "organamnist-unlabeled", "organcmnist-unlabeled", "organsmnist-unlabeled"]:
-            return MedMNISTUnlabeled(train, transform)
         else:
             assert False, "Invalid dataset"
 
@@ -85,29 +78,14 @@ def get_data(args):
     all_inds = list(range(len(full_train)))
     # Set seed
     np.random.seed(args.semisupervision_seed)
-
-    #unlabled dataset (before shuffle to obtain dload_train_label)
-    train_inds = np.array(all_inds)
-    train_labels = np.array([np.squeeze(full_train[ind][1])
-                                for ind in train_inds])
-    train_unlabeled_inds = []
-
-    for ind in train_inds:
-        if train_labels[ind] == 255:
-            train_unlabeled_inds.append(ind)
-
-    train_unlabeled_inds.sort()
-
-    print("train_unlabeled_inds before dataloader: " + str(train_unlabeled_inds))
-    print("Number of unlabeled imgs: " + str(len(train_unlabeled_inds)))
-
     # Shuffle
     np.random.shuffle(all_inds)
 
     if args.dataset in ["cifar10", "cifar100"]:
         # Seperate out validation set
         if args.n_valid is not None:
-            valid_inds, train_inds = all_inds[:args.n_valid], all_inds[args.n_valid:]
+            valid_inds, train_inds = all_inds[:
+                                              args.n_valid], all_inds[args.n_valid:]
         else:
             valid_inds, train_inds = [], all_inds
         train_inds = np.array(train_inds)
@@ -116,11 +94,11 @@ def get_data(args):
         # Semi-supervision
         if args.labels_per_class > 0:
             train_labeled_inds = []
-            other_inds = []
+            train_unlabeled_inds = []
             for i in range(args.n_classes):
                 train_labeled_inds.extend(
                     train_inds[train_labels == i][:args.labels_per_class])
-                other_inds.extend(
+                train_unlabeled_inds.extend(
                     train_inds[train_labels == i][args.labels_per_class:])
         else:
             train_labeled_inds = train_inds
@@ -138,18 +116,26 @@ def get_data(args):
         # Semi-supervision
         train_inds = np.array(all_inds)
         train_labels = np.array([np.squeeze(full_train[ind][1])
-                                for ind in train_inds])
-
-        if args.labels_per_class > 0:
-            train_labeled_inds = []
-            other_inds = []
-            for i in range(args.n_classes):
-                train_labeled_inds.extend(train_inds[train_labels == i][:args.labels_per_class])
-                other_inds.extend(train_inds[train_labels == i][args.labels_per_class:])
-
+                                    for ind in train_inds])
+        if start_iter:
+            if args.labels_per_class > 0:
+                train_labeled_inds = []
+                train_unlabeled_inds = []
+                for i in range(args.n_classes):
+                    train_labeled_inds.extend(
+                        train_inds[train_labels == i][:args.labels_per_class])
+                    train_unlabeled_inds.extend(
+                        train_inds[train_labels == i][args.labels_per_class:])
+            else:
+                train_labeled_inds = train_inds
         else:
-            train_labeled_inds = train_inds
+            train_labeled_inds = np.append(train_labeled_inds, inds_to_fix)
 
+            inds = np.argwhere(np.isin(train_unlabeled_inds, inds_to_fix))
+            train_unlabeled_inds = np.delete(train_unlabeled_inds, inds)
+
+        print("train_labeled_inds: " + str(len(train_labeled_inds)))
+        print("train_unlabeled_inds: " + str(len(train_unlabeled_inds)))
         # Dataset
         dset_train = DataSubset(
             dataset_fn(True, transform_train),
@@ -168,19 +154,15 @@ def get_data(args):
     if args.labels_per_class < 0 or args.labels_per_class*args.n_classes > args.batch_size:
         dload_train_labeled = DataLoader(
             dset_train_labeled, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
-        dload_train_unlabeled = DataLoader(
-            dset_train_unlabeled, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
     else:
         dload_train_labeled = DataLoader(
             dset_train_labeled, batch_size=args.labels_per_class*args.n_classes, shuffle=True, num_workers=4, drop_last=True)
-        dload_train_unlabeled = DataLoader(
-            dset_train_unlabeled, batch_size=args.labels_per_class*args.n_classes, shuffle=True, num_workers=4, drop_last=True)
-
     dload_train_labeled = cycle(dload_train_labeled)
+    dload_train_unlabeled = DataLoader(
+            dset_train_unlabeled, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
     dload_valid = DataLoader(dset_valid, batch_size=args.batch_size,
                              shuffle=False, num_workers=4, drop_last=False)
-
-    return dload_train, dload_train_labeled, dload_train_unlabeled, dload_valid, train_unlabeled_inds
+    return dload_train, dload_train_labeled, dload_train_unlabeled, dload_valid, train_labeled_inds, train_unlabeled_inds
 
 
 def get_test_data(args):
@@ -210,13 +192,8 @@ def get_test_data(args):
         info = medmnist.INFO[args.dataset]
         DataClass = getattr(medmnist, info['python_class'])
         dset = DataClass(split='test', transform=transform_test, download=True)
-    elif args.dataset in ["bloodmnist-unlabeled"]:
-        info = medmnist.INFO[args.dataset]
-        DataClass = getattr(medmnist, info['python_class'])
-        dset = DataClass(split='test', transform=transform_test, download=False)
     else:
         assert False, "Invalid dataset"
     dload = DataLoader(dset, batch_size=args.batch_size,
                        shuffle=False, num_workers=4, drop_last=False)
-
     return dload

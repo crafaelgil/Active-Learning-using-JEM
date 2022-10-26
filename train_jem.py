@@ -4,7 +4,7 @@ Author: Hideaki Hayashi
 Ver. 1.0.0
 """
 
-# import medmnist
+import medmnist
 import utils
 import torch as t
 import torch.nn as nn
@@ -23,8 +23,6 @@ from tqdm import tqdm
 from dataload_utils import get_data
 t.backends.cudnn.benchmark = True
 t.backends.cudnn.enabled = True
-
-import shutil
 
 
 class F(nn.Module):
@@ -206,8 +204,8 @@ def main(args):
     if t.cuda.is_available():
         t.cuda.manual_seed_all(args.cuda_seed)
 
-    # # Datasets
-    # dload_train, dload_train_labeled, dload_train_unlabeled, dload_val, train_unlabeled_inds = get_data(args)
+    # Datasets
+    dload_train, dload_train_labeled, dload_train_unlabeled, dload_val, train_labeled_inds, train_unlabeled_inds = get_data(args)
 
     # Model
     sample_q = get_sample_q(args, device)
@@ -222,10 +220,12 @@ def main(args):
         optim = t.optim.SGD(params, lr=args.lr, momentum=.9,
                             weight_decay=args.weight_decay)
 
-    for num_iter in range(1):
-        print("Working on " + str(args.dataset) + " dataset after " + str(num_iter) + " fixing iterations")
-        dload_train, dload_train_labeled, dload_train_unlabeled, dload_val, train_unlabeled_inds = get_data(args)
+    best_active_learning_acc = 0.0
+    num_iter = 0
 
+    while best_active_learning_acc < 0.9 and train_unlabeled_inds is not None:
+        print("Active Learning iteration #" + str(num_iter))
+        # Main trainig loop
         best_valid_acc = 0.0
         cur_iter = 0
         reset_decay = 1.0
@@ -346,16 +346,19 @@ def main(args):
                     with t.no_grad():
                         # validation set
                         correct, loss = eval_classification(f, dload_val, device)
-                        print("Epoch {}: Valid Loss {}, Valid Acc {}".format(epoch, loss, correct))
+                        print("Epoch {}: Valid Loss {}, Valid Acc {}".format(
+                            epoch, loss, correct))
                         if correct > best_valid_acc:
                             best_valid_acc = correct
                             print("Best Valid!: {}".format(correct))
-                            checkpoint(f, replay_buffer, "best_valid_ckpt.pt", args, device)
+                            checkpoint(f, replay_buffer,
+                                    "best_valid_ckpt.pt", args, device)
                     f.train()
-
-                    # find_confidences_and_fix_unlabeled_dataset(args, f, dload_train_unlabeled, train_unlabeled_inds, device)
-
                 checkpoint(f, replay_buffer, "last_ckpt.pt", args, device)
+
+                # inds_to_fix = find_confidences_and_fix_unlabeled_dataset(args, f, dload_train_unlabeled, train_unlabeled_inds, device)
+
+                # dload_train, dload_train_labeled, dload_train_unlabeled, dload_val, train_labeled_inds, train_unlabeled_inds = get_data(args, train_labeled_inds, train_unlabeled_inds , inds_to_fix, start_iter=False)
             except ValueError as e:
                 # Reset to the best valid check point
                 print(e)
@@ -369,7 +372,16 @@ def main(args):
                     param_group['lr'] = param_group['lr']*reset_decay
                 additional_step = additional_step + 10
 
-        find_confidences_and_fix_unlabeled_dataset(args, f, dload_train_unlabeled, train_unlabeled_inds, device)
+        best_active_learning_acc = best_valid_acc
+
+        inds_to_fix = find_confidences_and_fix_unlabeled_dataset(args, f, dload_train_unlabeled, train_unlabeled_inds, device)
+
+        dload_train, dload_train_labeled, dload_train_unlabeled, dload_val, train_labeled_inds, train_unlabeled_inds = get_data(args, train_labeled_inds, train_unlabeled_inds , inds_to_fix, start_iter=False)
+
+        num_iter+=1
+
+
+
 
 def find_confidences_and_fix_unlabeled_dataset(args, f, dload_unlabeled, train_unlabeled_inds, device):
     confs, confs_to_fix = [], []
@@ -399,32 +411,13 @@ def find_confidences_and_fix_unlabeled_dataset(args, f, dload_unlabeled, train_u
         print("Inds to fix: " + str(inds_to_fix))
         print('Num inds to fix:' + str(len(inds_to_fix)))
 
-        update_unlabeled_dataset(args.dataset, inds_to_fix) #passing bloodmnist-unlabeled
+        return inds_to_fix
 
-def update_unlabeled_dataset(unlabled_dataset, inds_to_fix):
-    base_path = '/home/carlosgil/.medmnist/'
-
-    print('loading dataset: ' + str(unlabled_dataset))
-
-    unlabeled_dataset = dict(np.load(base_path + unlabled_dataset + '.npz'))
-
-    oracle_dataset = unlabled_dataset.split('-', 1)[0]
-    print('oracle dataset: ' + str(oracle_dataset))
-    oracle = dict(np.load(base_path + oracle_dataset + '.npz'))
-
-    for ind in inds_to_fix:
-        # prev_label = unlabeled_dataset['train_labels'][ind]
-        print('label at index ' + str(ind) + ': ' + str(unlabeled_dataset['train_labels'][ind]) + ' ---> ', end=' ')
-        unlabeled_dataset['train_labels'][ind] = oracle['train_labels'][ind]
-        print('label after fix: ' + str(unlabeled_dataset['train_labels'][ind]))
-        # print('label at index ' + str(ind) + ': ' + str(prev_label) + ' ---> ' + str(unlabeled_dataset['train_labels'][ind]))
-
-    np.savez(base_path + unlabled_dataset + '.npz', **unlabeled_dataset)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Training of the JEM")
     parser.add_argument("--dataset", type=str, default="cifar10",
-                        choices=["cifar10", "svhn", "cifar100", "MRI", "OCT", "pathmnist", "octmnist", "pneumoniamnist", "chestmnist", "dermamnist", "breastmnist", "bloodmnist", "tissuemnist", "organamnist", "organcmnist", "organsmnist", "bloodmnist-unlabeled"])
+                        choices=["cifar10", "svhn", "cifar100", "MRI", "OCT", "pathmnist", "octmnist", "pneumoniamnist", "chestmnist", "dermamnist", "breastmnist", "bloodmnist", "tissuemnist", "organamnist", "organcmnist", "organsmnist"])
     parser.add_argument("--data_root", type=str, default="../data")
     # optimization
     parser.add_argument("--lr", type=float, default=1e-4)
