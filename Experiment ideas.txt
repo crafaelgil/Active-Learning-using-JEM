@@ -1,15 +1,15 @@
 For dataset in (BloodMNIST, DermaMNIST, OrganAMNIST, OrganCMNIST, OrganSMNIST):
     for num_labels_per_class in (1,10,100):
         Find baseline (JEM) ACC, ECE, Confidence Histogram and Reliability Diagram
-        Also plot training and validation acc graph for further study
+        Also plot training loss and training and validation acc graph for further study
 
     for num_labels_per_class in (1,10,100):
         for query_size in (lower 1%, lower 5%, lower 10%):
             Find ACC, ECE, Confidence Histogram and Reliability Diagram using AL
-            Also plot training and validation acc graph for further study
+            Also plot training loss and training and validation acc graph for further study
         for query_size (labels per class) in (10, 100):
             Find ACC, ECE, Confidence Histogram and Reliability Diagram using AL
-            Also plot training and validation acc graph for further study
+            Also plot training loss and training and validation acc graph for further study
 
 total number of experiments: 5*(3+3*(3+2)) = 90
 total number of experiments per dataset: 18
