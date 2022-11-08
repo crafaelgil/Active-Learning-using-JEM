@@ -24,6 +24,9 @@ from dataload_utils import get_data
 t.backends.cudnn.benchmark = True
 t.backends.cudnn.enabled = True
 
+import torch
+from torch.utils.tensorboard import SummaryWriter
+
 
 class F(nn.Module):
     def __init__(self, n_classes=0):
@@ -220,11 +223,10 @@ def main(args):
         optim = t.optim.SGD(params, lr=args.lr, momentum=.9,
                             weight_decay=args.weight_decay)
 
-    best_active_learning_acc = 0.0
-    num_iter = 0
+    writer = SummaryWriter()
 
-    while best_active_learning_acc < 0.9 and train_unlabeled_inds is not None:
-        print("Active Learning iteration #" + str(num_iter))
+    for al_iteration in range(10):
+        print(f'Active Learning iteration #{al_iteration}')
         # Main trainig loop
         best_valid_acc = 0.0
         cur_iter = 0
@@ -339,7 +341,7 @@ def main(args):
                                 '{}/x_q_y{}_{:>06d}.png'.format(args.save_dir, epoch, i), x_q_y)
 
                 if epoch % args.ckpt_every == 0:
-                    checkpoint(f, replay_buffer, f'ckpt_{epoch}.pt', args, device)
+                    checkpoint(f, replay_buffer, f'ckpt_alit{al_iteration}_{epoch}.pt', args, device)
 
                 if epoch % args.eval_every == 0 and (args.p_y_given_x_weight > 0 or args.p_x_y_weight > 0):
                     f.eval()
@@ -351,19 +353,28 @@ def main(args):
                         if correct > best_valid_acc:
                             best_valid_acc = correct
                             print("Best Valid!: {}".format(correct))
-                            checkpoint(f, replay_buffer,
-                                    "best_valid_ckpt.pt", args, device)
-                    f.train()
-                checkpoint(f, replay_buffer, "last_ckpt.pt", args, device)
+                            checkpoint(f, replay_buffer, f'best_valid_ckpt_alit{al_iteration}.pt', args, device)
 
-                # inds_to_fix = find_confidences_and_fix_unlabeled_dataset(args, f, dload_train_unlabeled, train_unlabeled_inds, device)
+                        print(f'epoch # {epoch + args.n_epochs * al_iteration}: {epoch} + {args.n_epochs}*{al_iteration}')
+
+                        writer.add_scalar("acc/valid", correct, epoch + args.n_epochs * al_iteration)
+                        writer.add_scalar("loss/valid", loss, epoch + args.n_epochs * al_iteration)
+
+                    f.train()
+                checkpoint(f, replay_buffer, f'last_ckpt_alit{al_iteration}.pt', args, device)
+
+                # num_labels_to_fix = 8 # 1 per class
+
+                # inds_to_fix = find_confidences_and_fix_unlabeled_dataset(args, f, dload_train_unlabeled, train_unlabeled_inds, device, num_labels_to_fix)
 
                 # dload_train, dload_train_labeled, dload_train_unlabeled, dload_val, train_labeled_inds, train_unlabeled_inds = get_data(args, train_labeled_inds, train_unlabeled_inds , inds_to_fix, start_iter=False)
+
+
             except ValueError as e:
                 # Reset to the best valid check point
                 print(e)
                 ckpt_dict = t.load(os.path.join(
-                    args.save_dir, "best_valid_ckpt.pt"))
+                    args.save_dir, f"best_valid_ckpt_alit{al_iteration}.pt"))
                 f.load_state_dict(ckpt_dict["model_state_dict"])
                 replay_buffer = ckpt_dict["replay_buffer"]
                 print("Reset to the best valid check point")
@@ -372,18 +383,16 @@ def main(args):
                     param_group['lr'] = param_group['lr']*reset_decay
                 additional_step = additional_step + 10
 
-        best_active_learning_acc = best_valid_acc
+        num_labels_to_fix = 8 # 1 per class
 
-        inds_to_fix = find_confidences_and_fix_unlabeled_dataset(args, f, dload_train_unlabeled, train_unlabeled_inds, device)
+        inds_to_fix = find_confidences_and_fix_unlabeled_dataset(args, f, dload_train_unlabeled, train_unlabeled_inds, device, num_labels_to_fix)
 
         dload_train, dload_train_labeled, dload_train_unlabeled, dload_val, train_labeled_inds, train_unlabeled_inds = get_data(args, train_labeled_inds, train_unlabeled_inds , inds_to_fix, start_iter=False)
 
-        num_iter+=1
+    writer.flush()
+    writer.close()
 
-
-
-
-def find_confidences_and_fix_unlabeled_dataset(args, f, dload_unlabeled, train_unlabeled_inds, device):
+def find_confidences_and_fix_unlabeled_dataset(args, f, dload_unlabeled, train_unlabeled_inds, device, num_labels_to_fix):
     confs, confs_to_fix = [], []
 
     for x_p_d, y_p_d in tqdm(dload_unlabeled):
@@ -399,17 +408,19 @@ def find_confidences_and_fix_unlabeled_dataset(args, f, dload_unlabeled, train_u
 
         confs_to_fix.sort(key=lambda x:x[0]) #Sorts by confidence for each image
 
-        total_num_of_unlabeled_images = len(confs_to_fix)
-        lower_n_percent = 0.1
-        num_labels_to_fix = int(len(confs_to_fix) * lower_n_percent) #Fix 10% of unlabeled images using oracle
+        # total_num_of_unlabeled_images = len(confs_to_fix)
+        # lower_n_percent = 0.1
+        # num_labels_to_fix = int(len(confs_to_fix) * lower_n_percent) #Fix 10% of unlabeled images using oracle
         confs_to_fix = confs_to_fix[:num_labels_to_fix]
         inds_to_fix = [ind for conf, ind in confs_to_fix]
         inds_to_fix.sort()
 
-        print("Call oracle on " + str(num_labels_to_fix) + "/" + str(total_num_of_unlabeled_images) + " labels")
-        print("Lower " + str(int(lower_n_percent * 100)) + "% of confidences obtained: " + str(confs_to_fix))
-        print("Inds to fix: " + str(inds_to_fix))
-        print('Num inds to fix:' + str(len(inds_to_fix)))
+        print(f'inds to fix: {inds_to_fix}')
+
+        # print("Call oracle on " + str(num_labels_to_fix) + "/" + str(total_num_of_unlabeled_images) + " labels")
+        # print("Lower " + str(int(lower_n_percent * 100)) + "% of confidences obtained: " + str(confs_to_fix))
+        # print("Inds to fix: " + str(inds_to_fix))
+        # print('Num inds to fix:' + str(len(inds_to_fix)))
 
         return inds_to_fix
 
