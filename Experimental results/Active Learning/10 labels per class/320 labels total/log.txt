@@ -1,0 +1,6 @@
+| Wide-Resnet 28x10
+loading model from jem_bloodmnist/seed1/best_valid_ckpt_alit2.pt
+Using downloaded and verified file: /home/carlosgil/.medmnist/bloodmnist.npz
+Loss=0.6278854608535767
+Accuracy=0.812627911567688
+ECE=0.08898691545972627

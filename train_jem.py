@@ -383,7 +383,7 @@ def main(args):
                     param_group['lr'] = param_group['lr']*reset_decay
                 additional_step = additional_step + 10
 
-        num_labels_to_fix = 8 # 1 per class
+        num_labels_to_fix = 80 # 10 per class
 
         inds_to_fix = find_confidences_and_fix_unlabeled_dataset(args, f, dload_train_unlabeled, train_unlabeled_inds, device, num_labels_to_fix)
 
